@@ -3,7 +3,7 @@
 
 """
 本地随机将数据分成N个客户端，使用Flower进行联邦学习。
-dataset_with_clients.csv 已包含:
+dataset.csv 已包含:
    - Client_ID: 表示客户端身份 (1~N)
    - Label: 攻击 or 正常标签 (或多分类标签)
    - 其他特征列(数值型)
@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, precision_score, recall_score, f1_score
 
 import tensorflow as tf
 from tensorflow.keras import layers, Sequential
@@ -147,6 +147,22 @@ class IDSClient(fl.client.NumPyClient):
     def evaluate(self, parameters, config):
         self.model.set_weights(parameters)
         loss, accuracy = self.model.evaluate(self.X_val, self.y_val, verbose=0)
+
+        # y_pred_probs = self.model.predict(self.X_val)
+        # y_pred = np.argmax(y_pred_probs, axis=1)
+        #
+        # precision = precision_score(self.y_val, y_pred, average="weighted", zero_division=0)
+        # recall = recall_score(self.y_val, y_pred, average="weighted", zero_division=0)
+        # f1 = f1_score(self.y_val, y_pred, average="weighted", zero_division=0)
+        #
+        # return loss, len(self.X_val), {
+        #     "loss": loss,
+        #     "accuracy": accuracy,
+        #     "precision": precision,
+        #     "recall": recall,
+        #     "f1_score": f1
+        # }
+
         return loss, len(self.X_val), {"loss": float(loss), "accuracy": float(accuracy)}
 
 # ============ 自定义聚合函数 ============
@@ -165,16 +181,33 @@ def fit_metrics_aggregation_fn(fit_metrics):
 
 def evaluate_metrics_aggregation_fn(eval_metrics):
     if not eval_metrics:
+        # return {"accuracy": 0.0, "loss": 0.0, "precision": 0.0, "recall": 0.0, "f1_score": 0.0}
         return {"accuracy": 0.0, "loss": 0.0}
+
     losses = [metrics["loss"] for _, metrics in eval_metrics]
     accs = [metrics["accuracy"] for _, metrics in eval_metrics]
+    # precisions = [metrics["precision"] for _, metrics in eval_metrics]
+    # recalls = [metrics["recall"] for _, metrics in eval_metrics]
+    # f1_scores = [metrics["f1_score"] for _, metrics in eval_metrics]
+
     avg_loss = float(np.mean(losses))
     avg_acc = float(np.mean(accs))
+    # avg_precision = float(np.mean(precisions))
+    # avg_recall = float(np.mean(recalls))
+    # avg_f1 = float(np.mean(f1_scores))
+
     round_no = len(VAL_METRICS["round"]) + 1
     VAL_METRICS["round"].append(round_no)
     VAL_METRICS["loss"].append(avg_loss)
     VAL_METRICS["accuracy"].append(avg_acc)
     return {"accuracy": avg_acc, "loss": avg_loss}
+    # return {
+    #     "accuracy": avg_acc,
+    #     "loss": avg_loss,
+    #     "precision": avg_precision,
+    #     "recall": avg_recall,
+    #     "f1_score": avg_f1
+    # }
 
 # ============ 自定义策略 ============
 class MyFedAvg(fl.server.strategy.FedAvg):
@@ -192,7 +225,7 @@ class MyFedAvg(fl.server.strategy.FedAvg):
 # ============ 主函数入口 ============
 def main():
     parser = argparse.ArgumentParser(description="Federated IDS with Random Clients")
-    parser.add_argument("--data", type=str, default="dataset_with_clients.csv", help="CSV数据文件(已含Client_ID)")
+    parser.add_argument("--data", type=str, default="dataset.csv", help="CSV数据文件")
     parser.add_argument("--model", type=str, default="cnn", choices=["cnn", "rnn"], help="模型类型: cnn或rnn")
     parser.add_argument("--rounds", type=int, default=5, help="联邦学习轮数")
     args = parser.parse_args()
