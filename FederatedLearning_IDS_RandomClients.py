@@ -14,15 +14,14 @@ import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, precision_score, recall_score, f1_score
-
 import tensorflow as tf
 from tensorflow.keras import layers, Sequential
 import flwr as fl
 from flwr.common import Context, parameters_to_ndarrays
+import warnings
+warnings.simplefilter('ignore')
 
 # 配置GPU内存
 gpus = tf.config.list_physical_devices("GPU")
@@ -54,23 +53,19 @@ VAL_METRICS = {
 # ============ 数据加载与划分 ============
 def load_data(csv_path: str):
     df = pd.read_csv(csv_path)
-    df.dropna(inplace=True)
     return df
 
-def encode_and_scale(df: pd.DataFrame):
+# Extract features and labels
+def extract_features_and_labels(df: pd.DataFrame):
     label_col = "Label"
-    y_raw = df[label_col].values
-    label_enc = LabelEncoder()
-    y = label_enc.fit_transform(y_raw)
-
     exclude_cols = ["Label", "Client_ID"]
+
     feat_cols = [c for c in df.columns if c not in exclude_cols]
-    X_raw = df[feat_cols].values
 
-    scaler = StandardScaler()
-    X = scaler.fit_transform(X_raw)
-
+    X = df[feat_cols].values
+    y = df[label_col].values
     client_ids = df["Client_ID"].values
+
     return X, y, client_ids, feat_cols
 
 def split_data_by_client_id(X, y, client_ids, test_size=0.2, random_state=42):
@@ -235,7 +230,7 @@ def main():
         return
 
     df = load_data(args.data)
-    X, y, client_ids, feat_cols = encode_and_scale(df)
+    X, y, client_ids, feat_cols = extract_features_and_labels(df)
     client_data = split_data_by_client_id(X, y, client_ids)
 
     MODEL_TYPE = args.model
