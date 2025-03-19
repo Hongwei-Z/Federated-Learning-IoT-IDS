@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-本地随机将数据分成N个客户端，使用Flower进行联邦学习。
-dataset.csv 已包含:
-   - Client_ID: 表示客户端身份 (1~N)
-   - Label: 攻击 or 正常标签 (或多分类标签)
-   - 其他特征列(数值型)
+Federated Learning for Smart Home IoT Intrusion Detection
+This script:
+- Uses Flower for federated learning
+- Expects dataset.csv to contain:
+  - Client_ID: Representing client identity (1~N)
+  - Label: Attack or normal traffic labels (or multi-class labels)
+  - Other numerical feature columns
 """
 
 import os
@@ -15,28 +17,37 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix, precision_score, recall_score, f1_score
+from sklearn.metrics import classification_report, confusion_matrix
 import tensorflow as tf
 from keras import layers, Sequential
 import flwr as fl
 from flwr.common import Context, parameters_to_ndarrays
 import time
 
-# 配置GPU内存
-gpus = tf.config.list_physical_devices("GPU")
-if gpus:
-    try:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-    except RuntimeError as e:
-        print(e)
 
-# 根据是否有GPU设置设备名称
-device_name = "/GPU:0" if gpus else "/CPU:0"
+# Define hyperparameters
+EPOCHS = 10
+ROUNDS = 5
+BATCH_SIZE = 128
+DATASET_PATH = "multi.csv"
 
-print("Available devices:", tf.config.list_physical_devices())
 
-# ======== 全局变量记录多轮训练指标 ============
+# Configure GPU memory
+def configure_gpu():
+    gpus = tf.config.list_physical_devices("GPU")
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError as e:
+            print(e)
+
+    device_name = "/GPU:0" if gpus else "/CPU:0"
+    print("Available devices:", tf.config.list_physical_devices())
+    return device_name
+
+
+# Global variables to track metrics across training rounds
 TRAIN_METRICS = {
     "round": [],
     "loss": [],
@@ -49,13 +60,16 @@ VAL_METRICS = {
     "accuracy": [],
 }
 
-# ============ 数据加载与划分 ============
+
+# ============ Data Loading and Processing ============
 def load_data(csv_path: str):
+    # Load data from CSV file
     df = pd.read_csv(csv_path)
     return df
 
-# Extract features and labels
+
 def extract_features_and_labels(df: pd.DataFrame):
+    # Extract features and labels from dataframe
     label_col = "Label"
     exclude_cols = ["Label", "Client_ID"]
 
@@ -67,9 +81,12 @@ def extract_features_and_labels(df: pd.DataFrame):
 
     return X, y, client_ids, feat_cols
 
+
 def split_data_by_client_id(X, y, client_ids, test_size=0.2, random_state=42):
+    # Split data by client ID into training and validation sets
     unique_clients = np.unique(client_ids)
     client_data = {}
+
     for cid in unique_clients:
         mask = (client_ids == cid)
         X_c = X[mask]
@@ -78,10 +95,13 @@ def split_data_by_client_id(X, y, client_ids, test_size=0.2, random_state=42):
             X_c, y_c, test_size=test_size, random_state=random_state
         )
         client_data[cid] = (X_train, y_train, X_val, y_val)
+
     return client_data
 
-# ============ 模型设计 ============
-def create_cnn_model(input_dim: int, num_classes: int) -> Sequential:
+
+# ============ Model Design ============
+def create_cnn_model(input_dim: int, num_classes: int, device_name: str) -> Sequential:
+    # Create a CNN model
     with tf.device(device_name):
         model = Sequential([
             layers.Input(shape=(input_dim, 1)),
@@ -91,51 +111,49 @@ def create_cnn_model(input_dim: int, num_classes: int) -> Sequential:
             layers.Dense(64, activation="relu"),
             layers.Dense(num_classes, activation="softmax")
         ])
+
         model.compile(
             optimizer="adam",
             loss="sparse_categorical_crossentropy",
             metrics=["accuracy"]
         )
+
     return model
 
-def create_rnn_model(input_dim: int, num_classes: int) -> Sequential:
-    with tf.device(device_name):
-        model = Sequential([
-            layers.Input(shape=(input_dim, 1)),
-            layers.GRU(32),
-            layers.Dense(64, activation="relu"),
-            layers.Dense(num_classes, activation="softmax"),
-        ])
-        model.compile(
-            optimizer="adam",
-            loss="sparse_categorical_crossentropy",
-            metrics=["accuracy"]
-        )
-    return model
 
-# ============ Flower客户端 ============
+# ============ Flower Client ============
 class IDSClient(fl.client.NumPyClient):
+    # Client for Federated IDS
+
     def __init__(self, model, X_train, y_train, X_val, y_val):
         self.model = model
         self.X_train = np.expand_dims(X_train, axis=-1)
         self.y_train = y_train
-        self.X_val   = np.expand_dims(X_val, axis=-1)
-        self.y_val   = y_val
+        self.X_val = np.expand_dims(X_val, axis=-1)
+        self.y_val = y_val
 
     def get_parameters(self, config):
         return self.model.get_weights()
 
     def fit(self, parameters, config):
         self.model.set_weights(parameters)
-        # 调整训练轮数
-        epochs = config.get("epochs", 5)
-        batch_size = config.get("batch_size", 32)
+        epochs = config.get("epochs", EPOCHS)
+        batch_size = config.get("batch_size", BATCH_SIZE)
+
         history = self.model.fit(
-            self.X_train, self.y_train, epochs=epochs, batch_size=batch_size, verbose=0
+            self.X_train, self.y_train,
+            epochs=epochs,
+            batch_size=batch_size,
+            verbose=0
         )
+
         train_loss = history.history["loss"][-1]
-        train_acc  = history.history["accuracy"][-1]
-        metrics = {"train_loss": float(train_loss), "train_accuracy": float(train_acc)}
+        train_acc = history.history["accuracy"][-1]
+        metrics = {
+            "train_loss": float(train_loss),
+            "train_accuracy": float(train_acc)
+        }
+
         return self.model.get_weights(), len(self.X_train), metrics
 
     def evaluate(self, parameters, config):
@@ -143,21 +161,30 @@ class IDSClient(fl.client.NumPyClient):
         loss, accuracy = self.model.evaluate(self.X_val, self.y_val, verbose=0)
         return loss, len(self.X_val), {"loss": float(loss), "accuracy": float(accuracy)}
 
-# ============ 自定义聚合函数 ============
+
+# ============ Custom Aggregation Functions ============
 def fit_metrics_aggregation_fn(fit_metrics):
+    # Aggregate training metrics from clients
     if not fit_metrics:
         return {}
+
     losses = [metrics["train_loss"] for _, metrics in fit_metrics]
     accs = [metrics["train_accuracy"] for _, metrics in fit_metrics]
+
     avg_loss = float(np.mean(losses))
     avg_acc = float(np.mean(accs))
+
     round_no = len(TRAIN_METRICS["round"]) + 1
     TRAIN_METRICS["round"].append(round_no)
     TRAIN_METRICS["loss"].append(avg_loss)
     TRAIN_METRICS["accuracy"].append(avg_acc)
+
+    print(f'Training round {round_no}: loss={avg_loss:.4f}, accuracy={avg_acc:.4f}')
     return {"train_loss": avg_loss, "train_accuracy": avg_acc}
 
+
 def evaluate_metrics_aggregation_fn(eval_metrics):
+    # Aggregate evaluation metrics from clients
     if not eval_metrics:
         return {"accuracy": 0.0, "loss": 0.0}
 
@@ -171,10 +198,15 @@ def evaluate_metrics_aggregation_fn(eval_metrics):
     VAL_METRICS["round"].append(round_no)
     VAL_METRICS["loss"].append(avg_loss)
     VAL_METRICS["accuracy"].append(avg_acc)
+
+    print(f'Validation round {round_no}: loss={avg_loss:.4f}, accuracy={avg_acc:.4f}')
     return {"accuracy": avg_acc, "loss": avg_loss}
 
-# ============ 自定义策略 ============
-class MyFedAvg(fl.server.strategy.FedAvg):
+
+# ============ Custom Federated Strategy ============
+class EnhancedFedAvg(fl.server.strategy.FedAvg):
+    # Enhanced FedAvg strategy
+
     def __init__(self, num_rounds, **kwargs):
         super().__init__(**kwargs)
         self.num_rounds = num_rounds
@@ -186,110 +218,36 @@ class MyFedAvg(fl.server.strategy.FedAvg):
             self.final_parameters = aggregated_parameters
         return aggregated_parameters, metrics
 
-# ============ 主函数入口 ============
-def main():
-    parser = argparse.ArgumentParser(description="Federated IDS with Random Clients")
-    parser.add_argument("--data", type=str, default="./DatasetPreprocessing/dataset_binary.csv", help="CSV数据文件")
-    parser.add_argument("--model", type=str, default="cnn", choices=["cnn", "rnn"], help="模型类型: cnn或rnn")
-    parser.add_argument("--rounds", type=int, default=10, help="联邦学习轮数")
-    args = parser.parse_args()
 
-    if not os.path.exists(args.data):
-        print(f"数据文件 {args.data} 不存在！")
-        return
-
-    df = load_data(args.data)
-    X, y, client_ids, feat_cols = extract_features_and_labels(df)
-    client_data = split_data_by_client_id(X, y, client_ids)
-
-    MODEL_TYPE = args.model
-    input_dim = X.shape[1]
-    num_classes = len(np.unique(y))
-
-    clist = sorted(client_data.keys())
-    def client_fn(context: Context):
-        try:
-            idx = int(context.node_id) % len(clist)
-        except Exception:
-            idx = 0
-        c_id = clist[idx]
-        X_train, y_train, X_val, y_val = client_data[c_id]
-        if MODEL_TYPE == "rnn":
-            m = create_rnn_model(input_dim, num_classes)
-        else:
-            m = create_cnn_model(input_dim, num_classes)
-        return IDSClient(m, X_train, y_train, X_val, y_val).to_client()
-
-    strategy = MyFedAvg(
-        num_rounds=args.rounds,
-        fraction_fit=1.0,
-        fraction_evaluate=1.0,
-        min_fit_clients=len(clist),
-        min_evaluate_clients=len(clist),
-        min_available_clients=len(clist),
-        on_fit_config_fn=lambda rnd: {"epochs": 10, "batch_size": 32},
-        fit_metrics_aggregation_fn=fit_metrics_aggregation_fn,
-        evaluate_metrics_aggregation_fn=evaluate_metrics_aggregation_fn,
-    )
-
-    config = fl.server.ServerConfig(num_rounds=args.rounds)
-
-    num_clients = len(clist)
-    gpu_fraction = 1.0 / num_clients if num_clients > 0 else 1.0
-
-    result = fl.simulation.start_simulation(
-        client_fn=client_fn,
-        num_clients=num_clients,
-        config=config,
-        strategy=strategy,
-        client_resources={'num_cpus': 1, 'num_gpus': gpu_fraction},
-    )
-
-    final_params = strategy.final_parameters
-    if final_params is None:
-        print("未返回全局模型参数，无法进行全局评估。")
-        print("历史指标：")
-        print("训练指标：", TRAIN_METRICS)
-        print("验证指标：", VAL_METRICS)
-        return
-
-    weights = parameters_to_ndarrays(final_params)
-
-    if MODEL_TYPE == "rnn":
-        global_model = create_rnn_model(input_dim, num_classes)
-    else:
-        global_model = create_cnn_model(input_dim, num_classes)
-    global_model.set_weights(weights)
-
-    X_expanded = np.expand_dims(X, axis=-1)
-    final_loss, final_acc = global_model.evaluate(X_expanded, y, verbose=0)
-    print(f"\n[最终全局模型评估] Loss={final_loss:.4f}, Accuracy={final_acc:.4f}")
-
-    y_pred = np.argmax(global_model.predict(X_expanded), axis=1)
-    print("\n分类报告:\n", classification_report(y, y_pred))
-    cm = confusion_matrix(y, y_pred)
-    print("混淆矩阵:\n", cm)
-
+# ============ Visualization Functions ============
+def plot_metrics():
+    # Plot training and validation metrics
     plt.figure(figsize=(12, 5))
+
+    # Loss plot
     plt.subplot(1, 2, 1)
     plt.plot(TRAIN_METRICS["round"], TRAIN_METRICS["loss"], "o-", label="Train Loss")
     plt.plot(VAL_METRICS["round"], VAL_METRICS["loss"], "x-", label="Val Loss")
     plt.xlabel("Round")
     plt.ylabel("Loss")
-    plt.title("Train/Val Loss Over Rounds")
+    plt.title("Train / Val Loss Over Rounds")
     plt.legend()
 
+    # Accuracy plot
     plt.subplot(1, 2, 2)
     plt.plot(TRAIN_METRICS["round"], TRAIN_METRICS["accuracy"], "o-", label="Train Acc")
     plt.plot(VAL_METRICS["round"], VAL_METRICS["accuracy"], "x-", label="Val Acc")
     plt.xlabel("Round")
     plt.ylabel("Accuracy")
-    plt.title("Train/Val Accuracy Over Rounds")
+    plt.title("Train / Val Accuracy Over Rounds")
     plt.legend()
 
     plt.tight_layout()
     plt.show()
 
+
+def plot_confusion_matrix(cm):
+    # Plot confusion matrix
     plt.figure(figsize=(5, 4))
     plt.imshow(cm, cmap=plt.cm.Blues)
     plt.title("Confusion Matrix")
@@ -298,9 +256,117 @@ def main():
     plt.ylabel("True label")
     plt.show()
 
+
+# ============ Evaluation Functions ============
+def evaluate_global_model(global_model, X, y):
+    # Evaluate the global model performance
+    X_expanded = np.expand_dims(X, axis=-1)
+    final_loss, final_acc = global_model.evaluate(X_expanded, y, verbose=0)
+    print(f"\n[Final Global Model Evaluation] Loss={final_loss:.4f}, Accuracy={final_acc:.4f}")
+
+    y_pred = np.argmax(global_model.predict(X_expanded), axis=1)
+    print("\nClassification Report:\n", classification_report(y, y_pred))
+
+    cm = confusion_matrix(y, y_pred)
+    print("Confusion Matrix:\n", cm)
+
+    return cm
+
+
+# ============ Main Function ============
+def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Federated Learning Based IoT IDS")
+    parser.add_argument("--data", type=str, default=DATASET_PATH, help="CSV data file path")
+    parser.add_argument("--model", type=str, default="cnn", help="Model type: cnn")
+    parser.add_argument("--rounds", type=int, default=ROUNDS, help="Number of fl rounds")
+    args = parser.parse_args()
+
+    # Verify data file exists
+    if not os.path.exists(args.data):
+        print(f"Data file {args.data} does not exist!")
+        return
+
+    # Configure GPU
+    device_name = configure_gpu()
+
+    # Load and process data
+    df = load_data(args.data)
+    X, y, client_ids, feat_cols = extract_features_and_labels(df)
+    client_data = split_data_by_client_id(X, y, client_ids)
+
+    # Model configuration
+    input_dim = X.shape[1]
+    num_classes = len(np.unique(y))
+
+    # Setup client selection function
+    clist = sorted(client_data.keys())
+
+    def client_fn(context: Context):
+        try:
+            idx = int(context.node_id) % len(clist)
+        except Exception:
+            idx = 0
+        c_id = clist[idx]
+        X_train, y_train, X_val, y_val = client_data[c_id]
+
+        m = create_cnn_model(input_dim, num_classes, device_name)
+        return IDSClient(m, X_train, y_train, X_val, y_val).to_client()
+
+    # Configure federated learning strategy
+    strategy = EnhancedFedAvg(
+        num_rounds=args.rounds,
+        fraction_fit=1.0,
+        fraction_evaluate=1.0,
+        min_fit_clients=len(clist),
+        min_evaluate_clients=len(clist),
+        min_available_clients=len(clist),
+        on_fit_config_fn=lambda rnd: {"epochs": EPOCHS, "batch_size": BATCH_SIZE},
+        fit_metrics_aggregation_fn=fit_metrics_aggregation_fn,
+        evaluate_metrics_aggregation_fn=evaluate_metrics_aggregation_fn,
+    )
+
+    config = fl.server.ServerConfig(num_rounds=args.rounds)
+
+    # Calculate resources per client
+    num_clients = len(clist)
+    gpu_fraction = 1.0 / num_clients if num_clients > 0 else 1.0
+
+    # Start federated simulation
+    result = fl.simulation.start_simulation(
+        client_fn=client_fn,
+        num_clients=num_clients,
+        config=config,
+        strategy=strategy,
+        client_resources={'num_cpus': 1, 'num_gpus': gpu_fraction},
+    )
+
+    # Evaluate final global model
+    final_params = strategy.final_parameters
+    if final_params is None:
+        print("No global model parameters returned, cannot perform global evaluation.")
+        print("Historical metrics:")
+        print("Training metrics:", TRAIN_METRICS)
+        print("Validation metrics:", VAL_METRICS)
+        return
+
+    # Convert parameters to weights and create model
+    weights = parameters_to_ndarrays(final_params)
+    global_model = create_cnn_model(input_dim, num_classes, device_name)
+    global_model.set_weights(weights)
+
+    # Evaluate and visualize results
+    cm = evaluate_global_model(global_model, X, y)
+    plot_metrics()
+    plot_confusion_matrix(cm)
+
+
 if __name__ == "__main__":
     start_time = time.time()
+
     main()
+
     end_time = time.time()
-    time_costs = end_time - start_time
-    print(f"Training time: {time_costs:.4f} seconds")
+    training_time = end_time - start_time
+
+    print(f"Training time: {training_time:.4f} seconds")
