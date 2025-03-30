@@ -17,13 +17,13 @@
 
 3. Federated Learning Results:      
    1. Multi-class classification:     
-      1. <img src="Results/Federated/multi/cnn/multi.csv_cnn_metrics_20250325_200259.png" width="50%">   
-      2. <img src="Results/Federated/multi/mlp/multi.csv_mlp_metrics_20250325_200647.png" width="50%">   
-      3. <img src="Results/Federated/multi/transformer/multi.csv_transformer_metrics_20250325_202147.png" width="50%">   
+      1. <img src="Results/Federated/multi/cnn/multi.csv_cnn_metrics_20250325_200259.png" width="70%">   
+      2. <img src="Results/Federated/multi/mlp/multi.csv_mlp_metrics_20250325_200647.png" width="70%">   
+      3. <img src="Results/Federated/multi/transformer/multi.csv_transformer_metrics_20250325_202147.png" width="70%">   
    2. Binary classification:   
-      1. <img src="Results/Federated/binary/cnn/binary.csv_cnn_metrics_20250325_193756.png" width="50%">   
-      2. <img src="Results/Federated/binary/mlp/binary.csv_mlp_metrics_20250325_194042.png" width="50%">   
-      3. <img src="Results/Federated/binary/transformer/binary.csv_transformer_metrics_20250325_195043.png" width="50%">   
+      1. <img src="Results/Federated/binary/cnn/binary.csv_cnn_metrics_20250325_193756.png" width="70%">   
+      2. <img src="Results/Federated/binary/mlp/binary.csv_mlp_metrics_20250325_194042.png" width="70%">   
+      3. <img src="Results/Federated/binary/transformer/binary.csv_transformer_metrics_20250325_195043.png" width="70%">   
 
 4. Centralized Learning Results:    
    1. [Multi-class classification](Results/Centralized/multi.csv)  
